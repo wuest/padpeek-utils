@@ -5,20 +5,23 @@ import qualified Data.ByteString.Char8 as ByteString
 import qualified Data.Char as Char
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
+import qualified Data.Time as Time
+import qualified Data.Time.Clock.POSIX as PTime
 import qualified System.Environment as Env
 import System.Hardware.Serialport
 import System.IO
 
-type PadPacket = (String, String)
+type PadPacket = (Time.UTCTime, String, String)
 type ControllerMap = Map.Map String Int
 type ControllerState = Map.Map String Bool
 type ControllerDisplay = [[String]]
+type TimedChar = (Time.UTCTime, Char)
 
 pressedButtonString = " (\ESC[31;41m+\ESC[0m)"
 unpressedButtonString = " ( )"
 
 packetSize = 8
-emptyPacket = ("", "") :: PadPacket
+emptyPacket = (PTime.posixSecondsToUTCTime 0, "", "") :: PadPacket
 
 emptySnesState = Map.fromList [] :: ControllerState
 snesController = Map.fromList [("A", 0x1), ("B", 0x100), ("X", 0x2), ("Y", 0x200)
@@ -40,9 +43,12 @@ buildDisplayString cd cs =
     unlines $ fmap (unwords .
         fmap (\k -> (k ++) $ ifPressed $ Map.lookup k cs)) cd
 
-printPad :: String -> IO ()
-printPad state =
-    putStr . (++) "\ESC[1;1H" . buildDisplayString snesDisplay $ activeMap snesController state
+printPad :: Time.NominalDiffTime -> (Time.UTCTime, String) -> IO ()
+printPad delayMilliseconds (packetTime, state) = do
+    currentTime <- Time.getCurrentTime
+    let timeDiff = Time.diffUTCTime currentTime packetTime
+    threadDelay $ floor . (* 1000000) . toRational $ delayMilliseconds - timeDiff
+    putStr $ (++) "\ESC[1;1H" $ buildDisplayString snesDisplay $ activeMap snesController state
 
 -- SNES only presently
 activeMap :: ControllerMap -> String -> ControllerState
@@ -52,38 +58,42 @@ activeMap controller state = do
     Map.foldrWithKey f emptySnesState snesController
 
 validPacket :: PadPacket -> Bool
-validPacket (sync, msg) = sync == "SYNC" && length msg == 4
+validPacket (_, sync, msg) = sync == "SYNC" && length msg == 4
 
-padState :: Chan Char -> PadPacket -> IO String
-padState chan (sync, msg) =
-    if validPacket (sync, msg)
-        then return msg
+padState :: Chan TimedChar -> PadPacket -> IO (Time.UTCTime, String)
+padState chan (time, sync, msg) =
+    if validPacket (time, sync, msg)
+        then return (time, msg)
         else (do
-            byte <- readChan chan
+            (time, byte) <- readChan chan
             let full = sync ++ msg ++ [byte]
                 part = drop (length full - 8) full
-            padState chan (take 4 full, drop 4 full))
+            padState chan (time, take 4 full, drop 4 full))
 
-displayPad :: Chan Char -> IO ()
-displayPad chan = do
-    printPad =<< padState chan emptyPacket
-    displayPad chan
+displayPad :: Chan TimedChar -> Time.NominalDiffTime -> IO ()
+displayPad chan delayMilliseconds = do
+    printPad delayMilliseconds =<< padState chan emptyPacket
+    displayPad chan delayMilliseconds
 
-readSerial :: Chan Char -> SerialPort -> IO ()
+readSerial :: Chan TimedChar -> SerialPort -> IO ()
 readSerial chan serial = do
     packet <- recv serial packetSize
-    writeList2Chan chan (ByteString.unpack packet)
+    time <- Time.getCurrentTime
+    writeList2Chan chan $ map ((,) time) $ ByteString.unpack packet
     readSerial chan serial
 
-serialPort :: IO String
-serialPort = do
+parseArgs :: IO (String, Int)
+parseArgs = do
     args <- Env.getArgs
-    return $ head args
+    let serialPath = head args
+        delayMilliseconds = read (args!!1) :: Int
+    return (serialPath, delayMilliseconds)
 
 main :: IO ()
 main = do
     chan <- newChan
-    s <- flip openSerial defaultSerialSettings =<< serialPort
-    forkIO $ readSerial chan s
-    putStr "\ESC[2J"
-    displayPad chan
+    (serialPath, delayMilliseconds) <- parseArgs
+    serial <- openSerial serialPath defaultSerialSettings
+    forkIO $ readSerial chan serial
+    putStr "\ESC[?25l\ESC[2J"
+    displayPad chan ((realToFrac delayMilliseconds :: Time.NominalDiffTime) / 1000)

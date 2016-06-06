@@ -1,4 +1,19 @@
-module PadSerial ( ControllerState, ControllerMap, PadReader, open, controllerState, buttonActive) where
+module PadSerial
+    (
+      -- * The @PadReader@ type - handles reading from pad serial and tracking
+      -- state
+      PadReader
+    , open
+
+      -- * The @ControllerState@ type - describes the state of the pad observed
+      -- by PadReader
+    , ControllerState
+    , controllerState
+    , buttonActive
+    
+      -- * The @ControllerMap@ type - describes Label -> Bitmask relationships
+    , ControllerMap
+    ) where
 
 import Control.Concurrent
 import qualified Data.Bits as Bits
@@ -7,6 +22,7 @@ import qualified Data.Char as Char
 import qualified Data.Time as Time
 import qualified Data.Time.Clock.POSIX as PTime
 import qualified Data.Map.Strict as Map
+
 import System.Hardware.Serialport
 
 type ControllerState = Map.Map String Bool

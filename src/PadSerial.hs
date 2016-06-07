@@ -4,6 +4,7 @@ module PadSerial
       -- state
       PadReader
     , open
+    , rawPacket
 
       -- * The @ControllerState@ type - describes the state of the pad observed
       -- by PadReader
@@ -22,6 +23,7 @@ import qualified Data.Char as Char
 import qualified Data.Time as Time
 import qualified Data.Time.Clock.POSIX as PTime
 import qualified Data.Map.Strict as Map
+import Prelude
 
 import System.Hardware.Serialport
 
@@ -48,6 +50,9 @@ buttonActive' Nothing = False
 buttonActive' (Just False) = False
 buttonActive' (Just True) = True
 
+stringToInt :: String -> Int
+stringToInt state = foldl ((Bits..|.) . flip Bits.shift 8) 0 $ fmap Char.ord state
+
 controllerState :: PadReader -> IO (Time.UTCTime, ControllerState)
 controllerState reader = do
     let controller = mapFor reader
@@ -56,9 +61,18 @@ controllerState reader = do
 
 controllerState' :: ControllerMap -> String -> ControllerState
 controllerState' controller state = do
-    let s = foldl ((Bits..|.) . flip Bits.shift 8) 0 $ fmap Char.ord state
+    let s = stringToInt state
         f k v = Map.insert k ((Bits..&.) v s /= 0)
     Map.foldrWithKey f emptyState controller
+
+rawPacket :: PadReader -> IO (Time.UTCTime, (Int, (Int, Int)))
+rawPacket reader = do
+    (time, packet) <- padState reader
+    let controllerID = stringToInt $ take 2 packet
+        state = stringToInt $ drop 2 packet
+        high = flip Bits.shift (-8) $ (Bits..&.) state 0xFF00
+        low = (Bits..&.) state 0xFF
+    return (time, (controllerID, (high, low)))
 
 validPacket :: PadPacket -> Bool
 validPacket (_, sync, msg) = sync == "SYNC" && length msg == 4

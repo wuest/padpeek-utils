@@ -7,32 +7,33 @@ import PadSerial as Pad
 
 type ControllerDisplay = [[String]]
 
-pressedButtonString :: String
-pressedButtonString = " (\ESC[31;41m+\ESC[0m)"
+pressedButton :: String -> String
+pressedButton = ("(\ESC[37;41m" ++) . (++ "\ESC[0m)")
 
-unpressedButtonString :: String
-unpressedButtonString = " ( )"
+unpressedButton :: String -> String
+unpressedButton (' ':xs) = ' ':xs
+unpressedButton x   = "(" ++ x ++ ")"
 
 snesController :: ControllerMap
 snesController = Map.fromList [("A", 0x1), ("B", 0x100), ("X", 0x2), ("Y", 0x200)
                               ,("^", 0x1000), ("v", 0x2000), ("<", 0x4000), (">", 0x8000)
-                              ,("L", 0x4), ("R", 0x8), ("Select", 0x400), ("Start", 0x800)
+                              ,("L", 0x4), ("R", 0x8), ("s", 0x400), ("S", 0x800)
                               ]
 
 snesDisplay :: [[String]]
-snesDisplay = [["A", "B", "X", "Y"]
-              ,["^", "v", "<", ">"]
-              ,["L", "R", "Select", "Start"]
+snesDisplay = [["  ", "^", "  ", "L", "R", "  ", "X"]
+              ,["<", " ", ">", "   ", "   ", "Y", " ", "A"]
+              ,["  ", "v", "  ", "s", "S", "  ", "B"]
               ]
 
-buttonDisplay :: Bool -> String
-buttonDisplay True = pressedButtonString
-buttonDisplay False = unpressedButtonString
+buttonDisplay :: Bool -> (String -> String)
+buttonDisplay True  = pressedButton
+buttonDisplay False = unpressedButton
 
 buildDisplayString :: ControllerDisplay -> ControllerState -> String
 buildDisplayString cd cs =
     unlines $ fmap (unwords .
-        fmap (\k -> (k ++) $ buttonDisplay $ Pad.buttonActive cs k)) cd
+        fmap (\k -> (buttonDisplay $ Pad.buttonActive cs k) k)) cd
 
 printPad :: Time.NominalDiffTime -> (Time.UTCTime, Pad.ControllerState) -> IO ()
 printPad delayMilliseconds (packetTime, state) = do
